@@ -27,46 +27,41 @@ typedef unsigned char byte;
 
 typedef struct
 {
-    byte            magic_number;
-    byte            star_format;
+    byte            magicNumber;
+    byte            starFormat;
     byte            permissions[11];
-    byte            pathname_length[2];
+    byte            pathnameLength[2];
+    size_t          pathnameLengthDec;
     byte*           pathname;
-    byte            content_length[6];
-    size_t          content_length_dec;
+    byte            contentLength[6];
+    size_t          contentLengthDec;
     byte*           content;
-    byte hash;
-} star_struct;
+    byte            original_hash;
+    byte            calculated_hash;
+} starStruct;
 
 typedef struct
 {
-    star_struct*    stars;
+    starStruct*    stars;
     size_t          size;
-} galaxy_struct;
+} galaxyStruct;
 
-const byte magic_number = 'c';
-const size_t byte_size = sizeof(byte);
-const size_t magic_number_size = 1;
-const size_t star_format_size = 1;
-const size_t permissions_size = 10;
-const size_t pathname_length_size = 2;
-const size_t content_length_size = 6;
-const size_t hash_size = 1;
-const size_t star_struct_size = sizeof(star_struct);
-
-void print_read_file_error(FILE* file, const char* msg)
-{
-    perror(msg);
-    fclose(file);
-    exit(1);
-}
+const byte magicNumber = 'c';
+const size_t byteSize = sizeof(byte);
+const size_t magicNumberSize = 1;
+const size_t starFormatSize = 1;
+const size_t permissionsSize = 10;
+const size_t pathnameLengthSize = 2;
+const size_t contentLengthSize = 6;
+const size_t hashSize = 1;
+const size_t starStructSize = sizeof(starStruct);
 
 /**
  * @brief Frees the memory allocated for a galaxy.
  *
  * @param galaxy The galaxy structure to free.
  */
-void free_galaxy(galaxy_struct galaxy)
+void freeGalaxy(galaxyStruct galaxy)
 {
     for (size_t i = 0; i < galaxy.size; ++i)
     {
@@ -89,14 +84,96 @@ void free_galaxy(galaxy_struct galaxy)
 }
 
 /**
+ * @brief Prints an error message, closes the given file, and exits the program.
+ *
+ * This function is used to handle errors that occur while reading a galaxy from a file.
+ * It prints an error message using perror(), closes the file, and terminates the program with an exit status of 1.
+ *
+ * @param file The file being read from.
+ * @param galaxy The galaxy structure being populated.
+ * @param msg The error message to be printed.
+ */
+void printReadGalaxyError(FILE* file, galaxyStruct galaxy, const char* msg)
+{
+    perror(msg);
+    fclose(file);
+    exit(1);
+}
+
+/**
+ * @brief Calculates the hash of an item.
+ *
+ * This function calculates the hash of an item by iterating over its bytes and
+ * updating the hash value with each byte using the `galaxy_hash` function.
+ *
+ * @param lastHash The hash value computed for the previous items.
+ * @param item A pointer to the item's byte array.
+ * @param itemSize The size of the item's byte array.
+ * @return The calculated hash value.
+ */
+byte calculateItemHash(byte lastHash, byte* item, size_t itemSize)
+{
+    byte hash = lastHash;
+    for (size_t i = 0; i < itemSize; ++i)
+    {
+        hash = galaxy_hash(hash, item[i]);
+    }
+    return hash;
+}
+
+/**
+ * @brief Calculates the hash value for a star structure.
+ *
+ * This function calculates the hash value for a star structure by combining
+ * various fields and their byte arrays using the `galaxy_hash` function. The
+ * calculated hash value is stored in the `calculated_hash` field of the `star`
+ * structure.
+ *
+ * @param star A pointer to the star structure.
+ */
+void calculateHash(starStruct* star)
+{
+    star->calculated_hash = galaxy_hash(star->calculated_hash, star->magicNumber);
+    star->calculated_hash = galaxy_hash(star->calculated_hash, star->starFormat);
+    star->calculated_hash = calculateItemHash(star->calculated_hash, star->permissions, permissionsSize);
+    star->calculated_hash = calculateItemHash(star->calculated_hash, star->pathnameLength, pathnameLengthSize);
+    star->calculated_hash = calculateItemHash(star->calculated_hash, star->pathname, star->pathnameLengthDec);
+    star->calculated_hash = calculateItemHash(star->calculated_hash, star->contentLength, contentLengthSize);
+    star->calculated_hash = calculateItemHash(star->calculated_hash, star->content, star->contentLengthDec);
+}
+
+/**
+ * @brief Compares the calculated hash value with the original hash value.
+ *
+ * This function compares the calculated hash value with the original hash value
+ * stored in the `original_hash` field of the `star` structure. If the hash values
+ * match, it prints "correct hash". Otherwise, it prints "incorrect hash" along
+ * with the expected and actual hash values.
+ *
+ * @param star A pointer to the star structure.
+ */
+void compareHash(starStruct* star)
+{
+    printf("%s - ", star->pathname);
+    if (star->calculated_hash == star->original_hash)
+    {
+        printf("correct hash\n");
+    }
+    else
+    {
+        printf("incorect hash %0#x should be %0#x\n", star->calculated_hash, star->original_hash);
+    }
+}
+
+/**
  * @brief Reads a galaxy from a file.
  *
  * @param pathname The path to the file containing the galaxy data.
  * @return The galaxy structure read from the file.
  */
-galaxy_struct read_galaxy(const char* pathname)
+galaxyStruct readGalaxy(const char* pathname)
 {
-    galaxy_struct galaxy;
+    galaxyStruct galaxy;
     galaxy.stars = NULL;
     galaxy.size = 0;
 
@@ -104,14 +181,14 @@ galaxy_struct read_galaxy(const char* pathname)
     if (file == NULL)
     {
         perror("Unable to open the file.\n");
-        return galaxy;
+        exit(1);
     }
 
     while (!feof(file))
     {
-        star_struct new_star;
+        starStruct new_star;
 
-        if (fread(&new_star.magic_number, byte_size, magic_number_size,file) < magic_number_size)
+        if (fread(&new_star.magicNumber, byteSize, magicNumberSize,file) < magicNumberSize)
         {
             if (feof(file))
             {
@@ -120,64 +197,66 @@ galaxy_struct read_galaxy(const char* pathname)
 
             if (ferror(file))
             {
-                print_read_file_error(file, "Error occurred while reading the magic number.\n");
+                printReadGalaxyError(file, galaxy, "Error occurred while reading the magic number.\n");
             }
         }
-        if (new_star.magic_number != magic_number)
+        if (new_star.magicNumber != magicNumber)
         {
-            fprintf(stderr, "magic number don't match.");
-            free_galaxy(galaxy);
-            exit(1);
+            printReadGalaxyError(file, galaxy, "magic number don't match.\n");
+        }
+        
+
+        if (fread(&new_star.starFormat, byteSize, starFormatSize, file) < starFormatSize && ferror(file))
+        {
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the star format.\n");
         }
 
-        if (fread(&new_star.star_format, byte_size, star_format_size, file) < star_format_size && ferror(file))
+        if (fread(new_star.permissions, byteSize, permissionsSize, file) < permissionsSize && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the star format.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the permission.\n");
         }
+        new_star.permissions[permissionsSize] = '\0';
 
-        if (fread(new_star.permissions, byte_size, permissions_size, file) < permissions_size && ferror(file))
+        if (fread(new_star.pathnameLength, byteSize, pathnameLengthSize, file) < pathnameLengthSize && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the permission.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the pathname length.\n");
         }
-        new_star.permissions[permissions_size] = '\0';
+        new_star.pathnameLengthDec = ( new_star.pathnameLength[1] << 8 ) | new_star.pathnameLength[0];
+        new_star.pathname = (byte*)malloc(new_star.pathnameLengthDec + 1);
 
-        if (fread(new_star.pathname_length, byte_size, pathname_length_size, file) < pathname_length_size && ferror(file))
+        if (fread(new_star.pathname, byteSize, new_star.pathnameLengthDec, file) < new_star.pathnameLengthDec && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the pathname length.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the pathname.\n");
         }
-        unsigned short pathname_length = ( new_star.pathname_length[1] << 8 ) | new_star.pathname_length[0];
-        new_star.pathname = (byte*)malloc(pathname_length + 1);
+        new_star.pathname[new_star.pathnameLengthDec] = '\0';
 
-        if (fread(new_star.pathname, byte_size, pathname_length, file) < pathname_length && ferror(file))
+        if (fread(new_star.contentLength, byteSize, contentLengthSize, file) < contentLengthSize && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the pathname.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the content length.\n");
         }
-        new_star.pathname[pathname_length] = '\0';
+        new_star.contentLengthDec = 0;
+        for (int i = contentLengthSize - 1; i >= 0; --i)
+        {
+            new_star.contentLengthDec = ( new_star.contentLengthDec << 8 ) | new_star.contentLength[i];
+        }
+        new_star.content = (byte*)malloc(new_star.contentLengthDec + 1);
 
-        if (fread(new_star.content_length, byte_size, content_length_size, file) < content_length_size && ferror(file))
+        if (fread(new_star.content, byteSize, new_star.contentLengthDec, file) < new_star.contentLengthDec && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the content length.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the content.\n");
         }
-        new_star.content_length_dec = 0;
-        for (int i = content_length_size - 1; i >= 0; --i)
-        {
-            new_star.content_length_dec = ( new_star.content_length_dec << 8 ) | new_star.content_length[i];
-        }
-        new_star.content = (byte*)malloc(new_star.content_length_dec + 1);
-
-        if (fread(new_star.content, byte_size, new_star.content_length_dec, file) < new_star.content_length_dec && ferror(file))
-        {
-            print_read_file_error(file, "Error occurred while reading the content.\n");
-        }
-        new_star.content[new_star.content_length_dec] = '\0';
+        new_star.content[new_star.contentLengthDec] = '\0';
  
-        if (fread(&new_star.hash, byte_size, hash_size, file) < hash_size && ferror(file))
+        if (fread(&new_star.original_hash, byteSize, hashSize, file) < hashSize && ferror(file))
         {
-            print_read_file_error(file, "Error occurred while reading the hash.\n");
+            printReadGalaxyError(file, galaxy, "Error occurred while reading the hash.\n");
         }
+
+        new_star.calculated_hash = 0;
+        calculateHash(&new_star);
 
         ++galaxy.size;
-        galaxy.stars = (star_struct*)realloc(galaxy.stars, galaxy.size * star_struct_size);
+        galaxy.stars = (starStruct*)realloc(galaxy.stars, galaxy.size * starStructSize);
         galaxy.stars[galaxy.size - 1] = new_star;
     }
 
@@ -196,9 +275,10 @@ galaxy_struct read_galaxy(const char* pathname)
  * @param galaxy_pathname The path to the galaxy file.
  * @param long_listing Flag indicating whether to include detailed information in the listing.
  */
-void list_galaxy(char *galaxy_pathname, int long_listing) {
+void list_galaxy(char *galaxy_pathname, int long_listing)
+{
 
-    galaxy_struct galaxy = read_galaxy(galaxy_pathname);
+    galaxyStruct galaxy = readGalaxy(galaxy_pathname);
     if (galaxy.stars != NULL)
     {
         for (size_t i = 0; i < galaxy.size; ++i)
@@ -207,14 +287,14 @@ void list_galaxy(char *galaxy_pathname, int long_listing) {
             {
                 printf("%s\t%c\t%zd\t",
                     galaxy.stars[i].permissions,
-                    galaxy.stars[i].star_format,
-                    galaxy.stars[i].content_length_dec
+                    galaxy.stars[i].starFormat,
+                    galaxy.stars[i].contentLengthDec
                 );
             }
             printf("%s\n", galaxy.stars[i].pathname);
         }
 
-        free_galaxy(galaxy);
+        freeGalaxy(galaxy);
     }
 }
 
@@ -225,11 +305,17 @@ void list_galaxy(char *galaxy_pathname, int long_listing) {
 // either, indicating the hash byte is correct, or indicating the hash byte
 // is incorrect, what the incorrect value is and the correct value would be
 
-void check_galaxy(char *galaxy_pathname) {
+void check_galaxy(char *galaxy_pathname)
+{
+    galaxyStruct galaxy = readGalaxy(galaxy_pathname);
+    if (galaxy.stars != NULL)
+    {
+        for (size_t i = 0; i < galaxy.size; ++i)
+        {
+            compareHash(&galaxy.stars[i]);
+        }
+    }
 
-    // REPLACE THIS PRINTF WITH YOUR CODE
-
-    printf("check_galaxy called to check galaxy: '%s'\n", galaxy_pathname);
 }
 
 
