@@ -20,6 +20,11 @@
 
 // ADD ANY extra #defines HERE
 
+// define permissions
+#define R   04
+#define W   02
+#define X   01
+
 
 // ADD YOUR FUNCTION PROTOTYPES (AND STRUCTS IF ANY) HERE
 
@@ -31,7 +36,7 @@ typedef struct
     byte            starFormat;
     byte            permissions[11];
     byte            pathnameLength[2];
-    size_t          pathnameLengthDec;
+    unsigned short  pathnameLengthDec;
     byte*           pathname;
     byte            contentLength[6];
     size_t          contentLengthDec;
@@ -61,42 +66,50 @@ const size_t starStructSize = sizeof(starStruct);
  *
  * @param galaxy The galaxy structure to free.
  */
-void freeGalaxy(galaxyStruct galaxy)
+void freeGalaxy(galaxyStruct* galaxy)
 {
-    for (size_t i = 0; i < galaxy.size; ++i)
+    for (size_t i = 0; i < galaxy->size; ++i)
     {
-        if (galaxy.stars[i].pathname != NULL)
+        if (galaxy->stars[i].pathname != NULL)
         {
-            free(galaxy.stars[i].pathname);
-            galaxy.stars[i].pathname = NULL;
+            free(galaxy->stars[i].pathname);
+            galaxy->stars[i].pathname = NULL;
         }
-        if (galaxy.stars[i].content != NULL)
+        if (galaxy->stars[i].content != NULL)
         {
-            free(galaxy.stars[i].content);
-            galaxy.stars[i].content = NULL;
+            free(galaxy->stars[i].content);
+            galaxy->stars[i].content = NULL;
         }
     }
-    if (galaxy.stars != NULL)
+    if (galaxy->stars != NULL)
     {
-        free(galaxy.stars);
-        galaxy.stars = NULL;
+        free(galaxy->stars);
+        galaxy->stars = NULL;
     }
 }
 
 /**
- * @brief Prints an error message, closes the given file, and exits the program.
+ * @brief Prints an error message, closes the file, frees the galaxy structure, and exits the program.
  *
- * This function is used to handle errors that occur while reading a galaxy from a file.
- * It prints an error message using perror(), closes the file, and terminates the program with an exit status of 1.
+ * This function is used to handle errors that occur during reading of a galaxy from a file.
+ * It prints an error message using perror(), closes the file, frees the galaxy structure,
+ * and exits the program with a non-zero status.
  *
  * @param file The file being read from.
- * @param galaxy The galaxy structure being populated.
+ * @param galaxy The galaxy structure being processed.
  * @param msg The error message to be printed.
  */
-void printReadGalaxyError(FILE* file, galaxyStruct galaxy, const char* msg)
+void printError(FILE* file, galaxyStruct* galaxy, const char* msg)
 {
     perror(msg);
-    fclose(file);
+    if (file != NULL)
+    {
+        fclose(file);
+    }
+    if (galaxy != NULL)
+    {
+        freeGalaxy(galaxy);
+    }
     exit(1);
 }
 
@@ -197,42 +210,42 @@ galaxyStruct readGalaxy(const char* pathname)
 
             if (ferror(file))
             {
-                printReadGalaxyError(file, galaxy, "Error occurred while reading the magic number.\n");
+                printError(file, &galaxy, "Error occurred while reading the magic number.");
             }
         }
         if (new_star.magicNumber != magicNumber)
         {
-            printReadGalaxyError(file, galaxy, "magic number don't match.\n");
+            printError(file, &galaxy, "magic number don't match.");
         }
         
 
         if (fread(&new_star.starFormat, byteSize, starFormatSize, file) < starFormatSize && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the star format.\n");
+            printError(file, &galaxy, "Error occurred while reading the star format.");
         }
 
         if (fread(new_star.permissions, byteSize, permissionsSize, file) < permissionsSize && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the permission.\n");
+            printError(file, &galaxy, "Error occurred while reading the permission.");
         }
         new_star.permissions[permissionsSize] = '\0';
 
         if (fread(new_star.pathnameLength, byteSize, pathnameLengthSize, file) < pathnameLengthSize && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the pathname length.\n");
+            printError(file, &galaxy, "Error occurred while reading the pathname length.");
         }
         new_star.pathnameLengthDec = ( new_star.pathnameLength[1] << 8 ) | new_star.pathnameLength[0];
         new_star.pathname = (byte*)malloc(new_star.pathnameLengthDec + 1);
 
         if (fread(new_star.pathname, byteSize, new_star.pathnameLengthDec, file) < new_star.pathnameLengthDec && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the pathname.\n");
+            printError(file, &galaxy, "Error occurred while reading the pathname.");
         }
         new_star.pathname[new_star.pathnameLengthDec] = '\0';
 
         if (fread(new_star.contentLength, byteSize, contentLengthSize, file) < contentLengthSize && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the content length.\n");
+            printError(file, &galaxy, "Error occurred while reading the content length.");
         }
         new_star.contentLengthDec = 0;
         for (int i = contentLengthSize - 1; i >= 0; --i)
@@ -243,13 +256,13 @@ galaxyStruct readGalaxy(const char* pathname)
 
         if (fread(new_star.content, byteSize, new_star.contentLengthDec, file) < new_star.contentLengthDec && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the content.\n");
+            printError(file, &galaxy, "Error occurred while reading the content.");
         }
         new_star.content[new_star.contentLengthDec] = '\0';
  
         if (fread(&new_star.original_hash, byteSize, hashSize, file) < hashSize && ferror(file))
         {
-            printReadGalaxyError(file, galaxy, "Error occurred while reading the hash.\n");
+            printError(file, &galaxy, "Error occurred while reading the hash.");
         }
 
         new_star.calculated_hash = 0;
@@ -262,6 +275,104 @@ galaxyStruct readGalaxy(const char* pathname)
 
     fclose(file);
     return galaxy;
+}
+
+/**
+ * @brief Retrieves the permissions of a star.
+ *
+ * This function extracts the permissions from a starStruct and converts them
+ * into a mode_t value.
+ *
+ * @param star A pointer to the starStruct containing the permissions.
+ * @return The mode_t value representing the permissions.
+ */
+mode_t getPermissions(starStruct* star)
+{
+    const byte* permissionsString = star->permissions + 1;
+    mode_t permissions = 0;
+
+    int count = 0;
+    while (1)
+    {
+        switch (permissionsString[count])
+        {
+            case 'r':
+            {
+                permissions |= R;
+                break;
+            }
+            case 'w':
+            {
+                permissions |= W;
+                break;
+            }
+            case 'x':
+            {
+                permissions |= X;
+                break;
+            }
+            default:
+            {
+                permissions |= 0;
+            }
+        }
+
+        if (count == 8)
+        {
+            break;
+        }
+
+        if (count % 3 == 2)
+        {
+            permissions <<= 3;
+        }
+
+        ++count;
+    }
+
+    return permissions;
+}
+
+/**
+ * @brief Retrieves the permissions of a star.
+ *
+ * This function extracts the permissions from a starStruct and converts them
+ * into a mode_t value.
+ *
+ * @param star A pointer to the starStruct containing the permissions.
+ * @return The mode_t value representing the permissions.
+ */
+void createFile(starStruct* star)
+{
+    printf("Extracting: ");
+
+    mode_t permissions = getPermissions(star);
+    const char* filePath = (char*)star->pathname;
+    if (star->permissions[0] == 'd')
+    {
+        if (mkdir(filePath, permissions) == -1)
+        {
+            printError(NULL, NULL, "folder creation failed");
+        }
+        printf("%s/\n", filePath);
+    }
+    else
+    {
+        FILE* file = fopen(filePath, "w");
+        for (size_t i = 0; i < star->contentLengthDec; ++i)
+        {
+            if (fputc(star->content[i], file) == EOF)
+            {
+                printError(NULL, NULL, "writing to file failed");
+            }
+        }
+        if (chmod(filePath, permissions) == -1)
+        {
+            printError(NULL, NULL, "failed to set file permissions");
+        }
+
+        printf("%s\n", filePath);
+    }
 }
 
 // print the files & directories stored in galaxy_pathname (subset 0)
@@ -294,7 +405,7 @@ void list_galaxy(char *galaxy_pathname, int long_listing)
             printf("%s\n", galaxy.stars[i].pathname);
         }
 
-        freeGalaxy(galaxy);
+        freeGalaxy(&galaxy);
     }
 }
 
@@ -305,6 +416,15 @@ void list_galaxy(char *galaxy_pathname, int long_listing)
 // either, indicating the hash byte is correct, or indicating the hash byte
 // is incorrect, what the incorrect value is and the correct value would be
 
+/**
+ * @brief Checks the integrity of a galaxy by comparing hashes of its stars.
+ *
+ * This function reads a galaxy from the specified pathname and compares the hashes
+ * of its stars. If the galaxy has stars and the star hashes are available, it
+ * calls the compareHash() function for each star to perform the comparison.
+ *
+ * @param galaxy_pathname The pathname of the galaxy file.
+ */
 void check_galaxy(char *galaxy_pathname)
 {
     galaxyStruct galaxy = readGalaxy(galaxy_pathname);
@@ -321,11 +441,25 @@ void check_galaxy(char *galaxy_pathname)
 
 // extract the files/directories stored in galaxy_pathname (subset 1 & 3)
 
-void extract_galaxy(char *galaxy_pathname) {
-
-    // REPLACE THIS PRINTF WITH YOUR CODE
-
-    printf("extract_galaxy called to extract galaxy: '%s'\n", galaxy_pathname);
+/**
+ * @brief Extracts stars from a galaxy and creates corresponding files/directories.
+ *
+ * This function reads a galaxyStruct and extracts the stars from it. For each
+ * star, it calls the createFile() function to create the corresponding file
+ * or directory.
+ *
+ * @param galaxy_pathname The pathname of the galaxy file.
+ */
+void extract_galaxy(char *galaxy_pathname)
+{
+    galaxyStruct galaxy = readGalaxy(galaxy_pathname);
+    if (galaxy.stars != NULL)
+    {
+        for (size_t i = 0; i < galaxy.size; ++i)
+        {
+            createFile(&galaxy.stars[i]);
+        }
+    }
 }
 
 
